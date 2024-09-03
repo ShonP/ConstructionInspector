@@ -146,7 +146,7 @@ def video_recording():
             if video_writer is None:
                 filename = os.path.join(videos_dir, datetime.datetime.now().strftime('%Y%m%d_%H%M%S') + '.avi')
                 fourcc = cv2.VideoWriter_fourcc(*'XVID')
-                video_writer = cv2.VideoWriter(filename, fourcc, 20.0, (640, 480))
+                video_writer = cv2.VideoWriter(filename, fourcc, 5.0, (640, 480))
                 print("Recording started: {}".format(filename))
 
             ret, frame = cap.read()
@@ -170,12 +170,20 @@ def video_recording():
         video_writer.release()
     cv2.destroyAllWindows()
     print("Video recording thread terminated.")
-
 def robot_control():
     global is_on_track
     print("Robot control thread started.")
+    last_pause_time = time.time()
+
     while True:
         tracking_test()
+        current_time = time.time()
+        if current_time - last_pause_time >= 2:
+            print("Pausing for 2 seconds...")
+            brake()
+            time.sleep(2)  # Pause for 2 seconds
+            last_pause_time = time.time()
+
         if is_on_track:
             if not recording.is_set():
                 print("Starting recording...")
@@ -185,6 +193,7 @@ def robot_control():
             if recording.is_set():
                 print("Stopping recording...")
                 recording.clear()
+
         time.sleep(0.05)  # Shorter delay for finer control
 
     print("Robot control thread terminated.")
