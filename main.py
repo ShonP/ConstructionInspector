@@ -46,66 +46,58 @@ pwm_ENB.start(0)
 CarSpeedControl = 30  # Adjust this value as needed
 
 recording = threading.Event()
-is_moving = False
+is_on_track = False
 video_writer = None
 
 def run():
-    global is_moving
     GPIO.output(IN1, GPIO.HIGH)
     GPIO.output(IN2, GPIO.LOW)
     GPIO.output(IN3, GPIO.HIGH)
     GPIO.output(IN4, GPIO.LOW)
     pwm_ENA.ChangeDutyCycle(CarSpeedControl)
     pwm_ENB.ChangeDutyCycle(CarSpeedControl)
-    is_moving = True
 
 def back():
-    global is_moving
     GPIO.output(IN1, GPIO.LOW)
     GPIO.output(IN2, GPIO.HIGH)
     GPIO.output(IN3, GPIO.LOW)
     GPIO.output(IN4, GPIO.HIGH)
     pwm_ENA.ChangeDutyCycle(CarSpeedControl)
     pwm_ENB.ChangeDutyCycle(CarSpeedControl)
-    is_moving = True
 
 def left():
-    global is_moving
     GPIO.output(IN1, GPIO.LOW)
     GPIO.output(IN2, GPIO.LOW)
     GPIO.output(IN3, GPIO.HIGH)
     GPIO.output(IN4, GPIO.LOW)
     pwm_ENA.ChangeDutyCycle(CarSpeedControl)
     pwm_ENB.ChangeDutyCycle(CarSpeedControl)
-    is_moving = True
 
 def right():
-    global is_moving
     GPIO.output(IN1, GPIO.HIGH)
     GPIO.output(IN2, GPIO.LOW)
     GPIO.output(IN3, GPIO.LOW)
     GPIO.output(IN4, GPIO.LOW)
     pwm_ENA.ChangeDutyCycle(CarSpeedControl)
     pwm_ENB.ChangeDutyCycle(CarSpeedControl)
-    is_moving = True
 
 def brake():
-    global is_moving
     GPIO.output(IN1, GPIO.LOW)
     GPIO.output(IN2, GPIO.LOW)
     GPIO.output(IN3, GPIO.LOW)
     GPIO.output(IN4, GPIO.LOW)
-    is_moving = False
 
 def tracking_test():
-    global is_moving
+    global is_on_track
+
     TrackSensorLeftValue1  = GPIO.input(TrackSensorLeftPin1)
     TrackSensorLeftValue2  = GPIO.input(TrackSensorLeftPin2)
     TrackSensorRightValue1 = GPIO.input(TrackSensorRightPin1)
     TrackSensorRightValue2 = GPIO.input(TrackSensorRightPin2)
 
     state = (TrackSensorLeftValue1, TrackSensorLeftValue2, TrackSensorRightValue1, TrackSensorRightValue2)
-    
+    if state != (1,1,1,1):
+        is_on_track = True
     if state == (0, 0, 0, 0):
         run()
     elif state == (1, 0, 0, 0):
@@ -137,12 +129,13 @@ def tracking_test():
     elif state == (1, 1, 1, 0):
         right()
     elif state == (1, 1, 1, 1):
+        is_on_track = False
         brake()
-
 def video_recording():
+    print("Video recording thread started.")
     global video_writer
-    cap = cv2.VideoCapture(0)
     
+    cap = cv2.VideoCapture(0)
     # Create the 'videos' directory if it doesn't exist
     videos_dir = 'videos'
     if not os.path.exists(videos_dir):
@@ -151,10 +144,10 @@ def video_recording():
     while True:
         if recording.is_set():
             if video_writer is None:
-                # Create unique filename with directory path
                 filename = os.path.join(videos_dir, datetime.datetime.now().strftime('%Y%m%d_%H%M%S') + '.avi')
                 fourcc = cv2.VideoWriter_fourcc(*'XVID')
                 video_writer = cv2.VideoWriter(filename, fourcc, 20.0, (640, 480))
+                print("Recording started: {}".format(filename))
 
             ret, frame = cap.read()
             if ret:
@@ -163,9 +156,11 @@ def video_recording():
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
             else:
+                print("Error reading from camera.")
                 break
         else:
             if video_writer is not None:
+                print("Recording stopped.")
                 video_writer.release()
                 video_writer = None
         time.sleep(0.1)  # Sleep briefly to avoid high CPU usage
@@ -174,21 +169,25 @@ def video_recording():
     if video_writer is not None:
         video_writer.release()
     cv2.destroyAllWindows()
+    print("Video recording thread terminated.")
 
 def robot_control():
-    global is_moving
+    global is_on_track
+    print("Robot control thread started.")
     while True:
         tracking_test()
-        if is_moving:
+        if is_on_track:
             if not recording.is_set():
-                # Start recording after the robot has been moving for 0.5s
+                print("Starting recording...")
                 time.sleep(0.5)
                 recording.set()
         else:
             if recording.is_set():
-                # Stop recording if the robot stops
+                print("Stopping recording...")
                 recording.clear()
         time.sleep(0.05)  # Shorter delay for finer control
+
+    print("Robot control thread terminated.")
 
 if __name__ == "__main__":
     # Start the video recording thread
@@ -205,6 +204,7 @@ if __name__ == "__main__":
         pass
     finally:
         # Cleanup
+        recording.clear()
         pwm_ENA.stop()
         pwm_ENB.stop()
         GPIO.cleanup()
