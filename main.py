@@ -1,4 +1,3 @@
-# -*- coding:utf-8 -*-
 import RPi.GPIO as GPIO
 import time
 import threading
@@ -131,12 +130,12 @@ def tracking_test():
     elif state == (1, 1, 1, 1):
         is_on_track = False
         brake()
+
 def video_recording():
     print("Video recording thread started.")
     global video_writer
     
     cap = cv2.VideoCapture(0)
-    # Create the 'videos' directory if it doesn't exist
     videos_dir = 'videos'
     if not os.path.exists(videos_dir):
         os.makedirs(videos_dir)
