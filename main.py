@@ -4,6 +4,7 @@ import time
 import threading
 import cv2
 import datetime
+import os
 
 # Motor pin definitions
 IN1 = 20
@@ -141,11 +142,17 @@ def tracking_test():
 def video_recording():
     global video_writer
     cap = cv2.VideoCapture(0)
+    
+    # Create the 'videos' directory if it doesn't exist
+    videos_dir = 'videos'
+    if not os.path.exists(videos_dir):
+        os.makedirs(videos_dir)
+
     while True:
         if recording.is_set():
             if video_writer is None:
-                # Create unique filename
-                filename = datetime.datetime.now().strftime('%Y%m%d_%H%M%S') + '.avi'
+                # Create unique filename with directory path
+                filename = os.path.join(videos_dir, datetime.datetime.now().strftime('%Y%m%d_%H%M%S') + '.avi')
                 fourcc = cv2.VideoWriter_fourcc(*'XVID')
                 video_writer = cv2.VideoWriter(filename, fourcc, 20.0, (640, 480))
 
