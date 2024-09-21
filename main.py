@@ -20,6 +20,9 @@ TrackSensorLeftPin2  =  5
 TrackSensorRightPin1 =  4   
 TrackSensorRightPin2 =  18  
 
+# Servo pin definition for physical pin 23 (WiringPi pin 13)
+SERVO_PIN = 13  # WiringPi pin 13 (Physical pin 23)
+
 # Initialize GPIO
 GPIO.setmode(GPIO.BCM)
 GPIO.setwarnings(False)
@@ -37,6 +40,10 @@ GPIO.setup(TrackSensorLeftPin2, GPIO.IN)
 GPIO.setup(TrackSensorRightPin1, GPIO.IN)
 GPIO.setup(TrackSensorRightPin2, GPIO.IN)
 
+GPIO.setup(SERVO_PIN, GPIO.OUT)  # Set up servo pin
+servo_pwm = GPIO.PWM(SERVO_PIN, 50)  # 50Hz for the servo
+servo_pwm.start(0)
+
 pwm_ENA = GPIO.PWM(ENA, 2000)
 pwm_ENB = GPIO.PWM(ENB, 2000)
 pwm_ENA.start(0)
@@ -48,6 +55,14 @@ CarSpeedControl = 30  # Adjust this value as needed
 recording = threading.Event()
 is_on_track = False
 video_writer = None
+
+def set_servo_angle(angle):
+    duty = 2 + (angle / 18)  # Calculate the duty cycle for the angle
+    GPIO.output(SERVO_PIN, True)
+    servo_pwm.ChangeDutyCycle(duty)
+    time.sleep(0.5)  # Allow time for the servo to move
+    GPIO.output(SERVO_PIN, False)
+    servo_pwm.ChangeDutyCycle(0)  # Stop sending signal
 
 def run():
     GPIO.output(IN1, GPIO.HIGH)
@@ -145,7 +160,6 @@ def upload_video(file_path):
         'Accept-Language': 'en-US',
     }
 
-    # Ensure the file exists before attempting to upload
     if not os.path.isfile(file_path):
         print(f"File not found: {file_path}")
         return
@@ -159,8 +173,6 @@ def upload_video(file_path):
 
         if response.status_code in [200, 201]:
             print(f"Successfully uploaded {file_path}")
-            # Optionally delete the file after successful upload
-            # os.remove(file_path)
         else:
             print(f"Failed to upload {file_path}. Status Code: {response.status_code}, Response: {response.text}")
     except Exception as e:
@@ -169,7 +181,7 @@ def upload_video(file_path):
 def video_recording():
     print("Video recording thread started.")
     global video_writer
-    filename = None  # Initialize filename
+    filename = None
 
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
@@ -183,10 +195,9 @@ def video_recording():
     while True:
         if recording.is_set():
             if video_writer is None:
-                filename = os.path.join(videos_dir, datetime.datetime.now().strftime('%Y%m%d_%H%M%S') + '.mp4')  # Changed to .mp4
-                fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Updated codec for MP4
-                video_writer = cv2.VideoWriter(filename, fourcc, 20.0, (640, 480))  # Increased FPS for smoother video
-                print("Recording started: {}".format(filename))
+                filename = os.path.join(videos_dir, datetime.datetime.now().strftime('%Y%m%d_%H%M%S') + '.mp4')
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                video_writer = cv2.VideoWriter(filename, fourcc, 20.0, (640, 480))
 
             ret, frame = cap.read()
             if ret:
@@ -205,7 +216,7 @@ def video_recording():
                 if filename:
                     upload_thread = threading.Thread(target=upload_video, args=(filename,))
                     upload_thread.start()
-        time.sleep(0.1)  # Sleep briefly to avoid high CPU usage
+        time.sleep(0.1)
 
     cap.release()
     if video_writer is not None:
@@ -224,32 +235,58 @@ def robot_control():
     while True:
         tracking_test()
         current_time = time.time()
+
+        # Servo rotation and recording when robot stops
         if current_time - last_pause_time >= 2:
             print("Pausing for 2 seconds...")
             brake()
-            time.sleep(2)  # Pause for 2 seconds
-            last_pause_time = time.time()
 
-        if is_on_track:
+            # Start recording before rotating the servo
             if not recording.is_set():
                 print("Starting recording...")
-                time.sleep(0.5)
                 recording.set()
-        else:
+
+            # Rotate servo to 90 degrees
+            print("Rotating servo to 90°...")
+            set_servo_angle(90)
+            time.sleep(1)
+
+            # Rotate servo to -90 degrees
+            print("Rotating servo to -90°...")
+            set_servo_angle(-90)
+            time.sleep(1)
+
+            # Return servo to 0 degrees
+            print("Returning servo to 0°...")
+            set_servo_angle(0)
+            time.sleep(1)
+
+            # Stop recording after full rotation
             if recording.is_set():
                 print("Stopping recording...")
                 recording.clear()
 
-        time.sleep(0.05)  # Shorter delay for finer control
+            last_pause_time = time.time()
+
+        if is_on_track:
+            if not recording.is_set():
+                print("Starting recording due to tracking...")
+                recording.set()
+        else:
+            if recording.is_set():
+                print("Stopping recording due to lost tracking...")
+                recording.clear()
+
+        time.sleep(0.05)
 
     print("Robot control thread terminated.")
 
 if __name__ == "__main__":
-    # Start the video recording thread
+    # Start video recording thread
     recording_thread = threading.Thread(target=video_recording, daemon=True)
     recording_thread.start()
 
-    # Start the robot control thread
+    # Start robot control thread
     control_thread = threading.Thread(target=robot_control, daemon=True)
     control_thread.start()
 
@@ -259,9 +296,9 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("Interrupted by user. Shutting down...")
     finally:
-        # Cleanup
         recording.clear()
         pwm_ENA.stop()
         pwm_ENB.stop()
+        servo_pwm.stop()
         GPIO.cleanup()
         print("Cleanup done. Exiting.")
