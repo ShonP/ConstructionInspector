@@ -4,6 +4,7 @@ import threading
 import cv2
 import datetime
 import os
+import requests
 
 # Motor pin definitions
 IN1 = 20
@@ -119,8 +120,6 @@ def tracking_test():
         right()
     elif state == (1, 0, 1, 0):
         left()
-    elif state == (1, 0, 0, 1):
-        right()
     elif state == (0, 1, 1, 1):
         left()
     elif state == (1, 1, 0, 1):
@@ -131,11 +130,52 @@ def tracking_test():
         is_on_track = False
         brake()
 
+def upload_video(file_path):
+    """
+    Uploads a video file to the specified endpoint with a bearer token.
+
+    Args:
+        file_path (str): The path to the video file to upload.
+    """
+    url = 'https://app-app-dev-eus2-004.azurewebsites.net/api/v1/videos/upload'
+    token = 'YOUR_BEARER_TOKEN_HERE'  # Replace with your actual bearer token
+
+    headers = {
+        'Authorization': f'Bearer {token}',
+        'Accept-Language': 'en-US',
+    }
+
+    # Ensure the file exists before attempting to upload
+    if not os.path.isfile(file_path):
+        print(f"File not found: {file_path}")
+        return
+
+    try:
+        with open(file_path, 'rb') as f:
+            files = {
+                'file': (os.path.basename(file_path), f, 'video/mp4')  # Updated MIME type
+            }
+            response = requests.post(url, headers=headers, files=files)
+
+        if response.status_code in [200, 201]:
+            print(f"Successfully uploaded {file_path}")
+            # Optionally delete the file after successful upload
+            # os.remove(file_path)
+        else:
+            print(f"Failed to upload {file_path}. Status Code: {response.status_code}, Response: {response.text}")
+    except Exception as e:
+        print(f"An error occurred while uploading {file_path}: {e}")
+
 def video_recording():
     print("Video recording thread started.")
     global video_writer
-    
+    filename = None  # Initialize filename
+
     cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("Error: Could not open video capture device.")
+        return
+
     videos_dir = 'videos'
     if not os.path.exists(videos_dir):
         os.makedirs(videos_dir)
@@ -143,9 +183,9 @@ def video_recording():
     while True:
         if recording.is_set():
             if video_writer is None:
-                filename = os.path.join(videos_dir, datetime.datetime.now().strftime('%Y%m%d_%H%M%S') + '.avi')
-                fourcc = cv2.VideoWriter_fourcc(*'XVID')
-                video_writer = cv2.VideoWriter(filename, fourcc, 5.0, (640, 480))
+                filename = os.path.join(videos_dir, datetime.datetime.now().strftime('%Y%m%d_%H%M%S') + '.mp4')  # Changed to .mp4
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Updated codec for MP4
+                video_writer = cv2.VideoWriter(filename, fourcc, 20.0, (640, 480))  # Increased FPS for smoother video
                 print("Recording started: {}".format(filename))
 
             ret, frame = cap.read()
@@ -162,13 +202,20 @@ def video_recording():
                 print("Recording stopped.")
                 video_writer.release()
                 video_writer = None
+                if filename:
+                    upload_thread = threading.Thread(target=upload_video, args=(filename,))
+                    upload_thread.start()
         time.sleep(0.1)  # Sleep briefly to avoid high CPU usage
 
     cap.release()
     if video_writer is not None:
         video_writer.release()
+        if filename:
+            upload_thread = threading.Thread(target=upload_video, args=(filename,))
+            upload_thread.start()
     cv2.destroyAllWindows()
     print("Video recording thread terminated.")
+
 def robot_control():
     global is_on_track
     print("Robot control thread started.")
@@ -199,20 +246,22 @@ def robot_control():
 
 if __name__ == "__main__":
     # Start the video recording thread
-    recording_thread = threading.Thread(target=video_recording)
+    recording_thread = threading.Thread(target=video_recording, daemon=True)
     recording_thread.start()
 
     # Start the robot control thread
-    control_thread = threading.Thread(target=robot_control)
+    control_thread = threading.Thread(target=robot_control, daemon=True)
     control_thread.start()
 
     try:
-        control_thread.join()
+        while True:
+            time.sleep(1)  # Keep the main thread alive
     except KeyboardInterrupt:
-        pass
+        print("Interrupted by user. Shutting down...")
     finally:
         # Cleanup
         recording.clear()
         pwm_ENA.stop()
         pwm_ENB.stop()
         GPIO.cleanup()
+        print("Cleanup done. Exiting.")
